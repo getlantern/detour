@@ -29,6 +29,7 @@ func proxyTo(proxiedURL string) func(network, addr string) (net.Conn, error) {
 }
 
 func TestBlockedImmediately(t *testing.T) {
+	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
 	TimeoutToDetour = 50 * time.Millisecond
@@ -69,6 +70,7 @@ func TestBlockedImmediately(t *testing.T) {
 }
 
 func TestBlockedAfterwards(t *testing.T) {
+	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
 	TimeoutToDetour = 50 * time.Millisecond
@@ -92,6 +94,7 @@ func TestBlockedAfterwards(t *testing.T) {
 }
 
 func TestRemoveFromWhitelist(t *testing.T) {
+	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
@@ -110,6 +113,7 @@ func TestRemoveFromWhitelist(t *testing.T) {
 }
 
 func TestClosing(t *testing.T) {
+	defer RemoveFromWl("localhost")
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
@@ -128,6 +132,7 @@ func TestClosing(t *testing.T) {
 }
 
 func TestIranRules(t *testing.T) {
+	defer RemoveFromWl("localhost")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
 	TimeoutToDetour = 50 * time.Millisecond
