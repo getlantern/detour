@@ -1,6 +1,7 @@
 package detour
 
 import (
+	"net"
 	"strings"
 	"sync"
 )
@@ -19,7 +20,7 @@ func ForceWhitelist(addr string) {
 	log.Tracef("Force whitelisting %v", addr)
 	muWhitelist.Lock()
 	defer muWhitelist.Unlock()
-	forceWhitelist[addr] = wlEntry{true}
+	forceWhitelist[hostOnly(addr)] = wlEntry{true}
 }
 
 // AddToWl adds a domain to whitelist, all subdomains of this domain
@@ -28,14 +29,14 @@ func AddToWl(addr string, permanent bool) {
 	log.Tracef("Adding %v to whitelist. Permanent? %v", addr, permanent)
 	muWhitelist.Lock()
 	defer muWhitelist.Unlock()
-	whitelist[addr] = wlEntry{permanent}
+	whitelist[hostOnly(addr)] = wlEntry{permanent}
 }
 
 func RemoveFromWl(addr string) {
 	log.Tracef("Removing %v from whitelist.", addr)
 	muWhitelist.Lock()
 	defer muWhitelist.Unlock()
-	delete(whitelist, addr)
+	delete(whitelist, hostOnly(addr))
 }
 
 func DumpWhitelist() (wl []string) {
@@ -54,7 +55,7 @@ func whitelisted(_addr string) (in bool) {
 	muWhitelist.RLock()
 	defer muWhitelist.RUnlock()
 	log.Tracef("Checking if %v is whitelisted", _addr)
-	for addr := _addr; addr != ""; addr = getParentDomain(addr) {
+	for addr := hostOnly(_addr); addr != ""; addr = getParentDomain(addr) {
 		_, forced := forceWhitelist[addr]
 		if forced {
 			log.Tracef("%v is force whitelisted as %v", _addr, addr)
@@ -74,7 +75,7 @@ func wlTemporarily(addr string) bool {
 	muWhitelist.RLock()
 	defer muWhitelist.RUnlock()
 	// temporary domains are always full ones, just check map
-	p, ok := whitelist[addr]
+	p, ok := whitelist[hostOnly(addr)]
 	return ok && p.permanent == false
 }
 
@@ -84,4 +85,12 @@ func getParentDomain(addr string) string {
 		return ""
 	}
 	return parts[1]
+}
+
+func hostOnly(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	return host
 }
