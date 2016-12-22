@@ -96,6 +96,13 @@ type Conn struct {
 	_writeDeadline atomic.Value
 }
 
+// WrappedConn exposes the underlying connection.
+func (c *Conn) WrappedConn() net.Conn {
+	c.muConn.RLock()
+	defer c.muConn.RUnlock()
+	return c.conn
+}
+
 const (
 	stateInitial = iota
 	stateDirect
