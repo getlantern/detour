@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -69,30 +70,6 @@ func TestBlockedImmediately(t *testing.T) {
 	}
 }
 
-func TestBlockedAfterwards(t *testing.T) {
-	defer RemoveFromWl("127.0.0.1")
-	defer stopMockServers()
-	proxiedURL, _ := newMockServer(detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
-	mockURL, mock := newMockServer(directMsg)
-	client := newClient(proxiedURL, 100*time.Millisecond)
-
-	mock.Msg(directMsg)
-	resp, err := client.Get(mockURL)
-	if assert.NoError(t, err, "should have no error for normal response") {
-		assertContent(t, resp, directMsg, "should access directly for normal response")
-	}
-	mock.Timeout(200*time.Millisecond, directMsg)
-	_, err = client.Get(mockURL)
-	assert.Error(t, err, "should have error if reading times out for a previously worked url")
-	resp, err = client.Get(mockURL)
-	if assert.NoError(t, err, "but should have no error for the second time") {
-		u, _ := url.Parse(mockURL)
-		assert.True(t, wlTemporarily(u.Host), "should be added to whitelist if reading times out")
-		assertContent(t, resp, detourMsg, "should detour if reading times out")
-	}
-}
-
 func TestRemoveFromWhitelist(t *testing.T) {
 	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
@@ -121,14 +98,15 @@ func TestClosing(t *testing.T) {
 	mockURL, mock := newMockServer(directMsg)
 	mock.Msg(directMsg)
 	DirectAddrCh = make(chan string)
-	{
-		if _, err := newClient(proxiedURL, 100*time.Millisecond).Get(mockURL); err != nil {
-			log.Debugf("Unable to send GET request to mock URL: %v", err)
-		}
+	if _, err := newClient(proxiedURL, 100*time.Millisecond).Get(mockURL); err != nil {
+		log.Debugf("Unable to send GET request to mock URL: %v", err)
 	}
 	u, _ := url.Parse(mockURL)
 	addr := <-DirectAddrCh
 	assert.Equal(t, u.Host, addr, "should get notified when a direct connetion has no error while closing")
+	if _, err := newAssertingClient(t, proxiedURL, 100*time.Millisecond, true).Get(mockURL); err != nil {
+		log.Debugf("Unable to send GET request to mock URL: %v", err)
+	}
 }
 
 func TestIranRules(t *testing.T) {
@@ -155,12 +133,24 @@ func TestIranRules(t *testing.T) {
 }
 
 func newClient(proxyURL string, timeout time.Duration) *http.Client {
+	return newAssertingClient(nil, proxyURL, timeout, false)
+}
+
+func newAssertingClient(t *testing.T, proxyURL string, timeout time.Duration, assertPlainConn bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Dial: Dialer(proxyTo(proxyURL))},
+			Dial: func(network, addr string) (net.Conn, error) {
+				conn, err := Dialer(proxyTo(proxyURL))(network, addr)
+				if assertPlainConn {
+					assert.NotEqual(t, reflect.TypeOf(&Conn{}), reflect.TypeOf(conn))
+				}
+				return conn, err
+			},
+		},
 		Timeout: timeout,
 	}
 }
+
 func assertContent(t *testing.T, resp *http.Response, msg string, reason string) {
 	b, err := ioutil.ReadAll(resp.Body)
 	assert.NoError(t, err, reason)
