@@ -61,6 +61,9 @@ var (
 	blockDetector atomic.Value
 
 	zeroTime time.Time
+
+	directAddrsMx sync.RWMutex
+	directAddrs   = make(map[string]bool)
 )
 
 func init() {
@@ -124,6 +127,9 @@ func SetCountry(country string) {
 // Dialer returns a function with same signature of net.Dialer.Dial().
 func Dialer(d dialFunc) dialFunc {
 	return func(network, addr string) (conn net.Conn, err error) {
+		if allowsDirect(addr) {
+			return netx.DialTimeout(network, addr, TimeoutToDetour)
+		}
 		dc := &Conn{dialDetour: d, network: network, addr: addr}
 		if !whitelisted(addr) {
 			log.Tracef("Attempting direct connection for %v", addr)
@@ -317,6 +323,7 @@ func (dc *Conn) Close() error {
 			AddToWl(dc.addr, true)
 		} else if dc.inState(stateDirect) && !wlTemporarily(dc.addr) {
 			log.Tracef("no error found till closing, notify caller that %s can be dialed directly", dc.addr)
+			setAllowsDirect(dc.addr)
 			// just fire it, but not blocking if the chan is nil or no reader
 			select {
 			case DirectAddrCh <- dc.addr:
@@ -460,4 +467,17 @@ func (dc *Conn) inState(s uint32) bool {
 
 func (dc *Conn) setState(s uint32) {
 	atomic.StoreUint32(&dc.state, s)
+}
+
+func allowsDirect(addr string) bool {
+	directAddrsMx.RLock()
+	result := directAddrs[addr]
+	directAddrsMx.RUnlock()
+	return result
+}
+
+func setAllowsDirect(addr string) {
+	directAddrsMx.Lock()
+	directAddrs[addr] = true
+	directAddrsMx.Unlock()
 }
