@@ -128,7 +128,7 @@ func SetCountry(country string) {
 func Dialer(d dialFunc) dialFunc {
 	return func(network, addr string) (conn net.Conn, err error) {
 		if allowsDirect(addr) {
-			return netx.DialTimeout(network, addr, TimeoutToDetour)
+			return netx.Dial(network, addr)
 		}
 		dc := &Conn{dialDetour: d, network: network, addr: addr}
 		if !whitelisted(addr) {
