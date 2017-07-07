@@ -33,6 +33,7 @@ package detour
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -41,7 +42,6 @@ import (
 	"time"
 
 	"github.com/getlantern/golog"
-	"github.com/getlantern/netx"
 )
 
 // if dial or read exceeded this timeout, we consider switch to detour
@@ -70,7 +70,7 @@ func init() {
 	blockDetector.Store(detectorByCountry(""))
 }
 
-type dialFunc func(network, addr string) (net.Conn, error)
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 type Conn struct {
 	// keep track of the total bytes read in this connection
@@ -124,19 +124,23 @@ func SetCountry(country string) {
 	blockDetector.Store(detectorByCountry(country))
 }
 
-// Dialer returns a function with same signature of net.Dialer.Dial().
-func Dialer(d dialFunc) dialFunc {
-	return func(network, addr string) (conn net.Conn, err error) {
+// Dialer returns a function with same signature of net.Dialer.DialContext().
+func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
+	return func(ctx context.Context, network, addr string) (
+		conn net.Conn, err error,
+	) {
 		if allowsDirect(addr) {
-			return netx.Dial(network, addr)
+			return directDialer(ctx, network, addr)
 		}
-		dc := &Conn{dialDetour: d, network: network, addr: addr}
+		dc := &Conn{dialDetour: detourDialer, network: network, addr: addr}
 		if !whitelisted(addr) {
 			log.Tracef("Attempting direct connection for %v", addr)
 			detector := blockDetector.Load().(*Detector)
 			dc.setState(stateInitial)
 			// always try direct connection first
-			dc.conn, err = netx.DialTimeout(network, addr, TimeoutToDetour)
+			newCTX, _ := context.WithDeadline(
+				ctx, time.Now().Add(TimeoutToDetour))
+			dc.conn, err = directDialer(newCTX, network, addr)
 			if err == nil {
 				if !detector.DNSPoisoned(dc.conn) {
 					log.Tracef("Dial %s to %s succeeded", dc.stateDesc(), addr)
@@ -156,7 +160,7 @@ func Dialer(d dialFunc) dialFunc {
 		log.Tracef("Detouring %v", addr)
 		// if whitelisted or dial directly failed, try detour
 		dc.setState(stateDetour)
-		dc.conn, err = dc.dialDetour(network, addr)
+		dc.conn, err = dc.dialDetour(ctx, network, addr)
 		if err != nil {
 			log.Errorf("Dial %s failed: %s", dc.stateDesc(), err)
 			return nil, err
@@ -290,7 +294,7 @@ func (dc *Conn) resend() (int, error) {
 }
 
 func (dc *Conn) setupDetour() error {
-	c, err := dc.dialDetour("tcp", dc.addr)
+	c, err := dc.dialDetour(context.Background(), dc.network, dc.addr)
 	if err != nil {
 		return err
 	}

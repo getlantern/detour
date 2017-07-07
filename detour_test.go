@@ -1,6 +1,7 @@
 package detour
 
 import (
+	"context"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/netx"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,10 +24,10 @@ Connection:close
 </title></head><body><iframe src="http://10.10.34.34?type=Invalid Site&policy=MainPolicy " style="width: 100%; height: 100%" scrolling="no" marginwidth="0" marginheight="0" frameborder="0" vspace="0" hspace="0"></iframe></body></html>Connection closed by foreign host.`
 )
 
-func proxyTo(proxiedURL string) func(network, addr string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
+func proxyTo(proxiedURL string) dialFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		u, _ := url.Parse(proxiedURL)
-		return net.Dial("tcp", u.Host)
+		return net.Dial(network, u.Host)
 	}
 }
 
@@ -139,8 +141,8 @@ func newClient(proxyURL string, timeout time.Duration) *http.Client {
 func newAssertingClient(t *testing.T, proxyURL string, timeout time.Duration, assertPlainConn bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Dial: func(network, addr string) (net.Conn, error) {
-				conn, err := Dialer(proxyTo(proxyURL))(network, addr)
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := Dialer(netx.DialContext, proxyTo(proxyURL))(ctx, network, addr)
 				if assertPlainConn {
 					assert.NotEqual(t, reflect.TypeOf(&Conn{}), reflect.TypeOf(conn))
 				}
