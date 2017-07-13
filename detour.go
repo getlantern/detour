@@ -24,9 +24,9 @@ The action taken and state transistion in each phase is as follows:
 tl = temporary whitelist
 wl = permanent whitelist
 
-* Operation will time out in TimeoutToDetour in initial state,
-but at system default or caller supplied deadline for other states;
-** DNS hijack is only checked at dial time.
+*   The timeout for first read is firstReadTimeoutToDetour, otherwise it's based
+    on system default or caller supplied deadline.
+**  DNS hijacking is only checked at dial time.
 *** Connection is always detoured if the site is in tl or wl.
 */
 package detour
@@ -44,18 +44,14 @@ import (
 	"github.com/getlantern/golog"
 )
 
-// if dial or read exceeded this timeout, we consider switch to detour
-// The value depends on OS and browser and defaults to 3s
-// For Windows XP, find TcpMaxConnectRetransmissions in
-// http://support2.microsoft.com/default.aspx?scid=kb;en-us;314053
-var TimeoutToDetour = 3 * time.Second
-
-// if DirectAddrCh is set, when a direct connection is closed without any error,
+// If DirectAddrCh is set, when a direct connection is closed without any error,
 // the connection's remote address (in host:port format) will be send to it
 var DirectAddrCh chan string = make(chan string)
 
 var (
 	log = golog.LoggerFor("detour")
+
+	firstReadTimeoutToDetour = 3 * time.Second
 
 	// instance of Detector
 	blockDetector atomic.Value
@@ -137,10 +133,9 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 			log.Tracef("Attempting direct connection for %v", addr)
 			detector := blockDetector.Load().(*Detector)
 			dc.setState(stateInitial)
-			// always try direct connection first
-			newCTX, _ := context.WithDeadline(
-				ctx, time.Now().Add(TimeoutToDetour))
-			dc.conn, err = directDialer(newCTX, network, addr)
+			// Always try direct connection first. The caller may choose a
+			// deadline shorter than the context passed in.
+			dc.conn, err = directDialer(ctx, network, addr)
 			if err == nil {
 				if !detector.DNSPoisoned(dc.conn) {
 					log.Tracef("Dial %s to %s succeeded", dc.stateDesc(), addr)
@@ -183,13 +178,13 @@ func (dc *Conn) Read(b []byte) (n int, err error) {
 	defer dc.resetLocalBuffer()
 	start := time.Now()
 	readDeadline := dc.readDeadline()
-	if !readDeadline.IsZero() && readDeadline.Sub(start) < 2*TimeoutToDetour {
+	if !readDeadline.IsZero() && readDeadline.Sub(start) < 2*firstReadTimeoutToDetour {
 		log.Tracef("no time left to test %s, read %s", dc.addr, statesDesc[stateDirect])
 		dc.setState(stateDirect)
 		return dc.countedRead(b)
 	}
-	// wait for at most TimeoutToDetour to read
-	if err := dc.getConn().SetReadDeadline(start.Add(TimeoutToDetour)); err != nil {
+	// wait for at most firstReadTimeoutToDetour to read
+	if err := dc.getConn().SetReadDeadline(start.Add(firstReadTimeoutToDetour)); err != nil {
 		log.Debugf("Unable to set read deadline: %v", err)
 	}
 	n, err = dc.countedRead(b)

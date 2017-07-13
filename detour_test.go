@@ -35,7 +35,7 @@ func TestBlockedImmediately(t *testing.T) {
 	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, mock := newMockServer(directMsg)
 
 	client := &http.Client{Timeout: 50 * time.Millisecond}
@@ -77,7 +77,7 @@ func TestRemoveFromWhitelist(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, _ := newMockServer(directMsg)
 	client := newClient(proxiedURL, 100*time.Millisecond)
 
@@ -96,7 +96,7 @@ func TestClosing(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, mock := newMockServer(directMsg)
 	mock.Msg(directMsg)
 	DirectAddrCh = make(chan string)
@@ -115,7 +115,7 @@ func TestIranRules(t *testing.T) {
 	defer RemoveFromWl("localhost")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	SetCountry("IR")
 	u, mock := newMockServer(directMsg)
 	client := newClient(proxiedURL, 100*time.Millisecond)
@@ -142,7 +142,14 @@ func newAssertingClient(t *testing.T, proxyURL string, timeout time.Duration, as
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				conn, err := Dialer(netx.DialContext, proxyTo(proxyURL))(ctx, network, addr)
+				conn, err := Dialer(
+					func(ctx context.Context, network, addr string) (net.Conn, error) {
+						// for simplicity, we use the same timeout for direct dialer.
+						newCTX, _ := context.WithTimeout(ctx, firstReadTimeoutToDetour)
+						return netx.DialContext(newCTX, network, addr)
+					},
+					proxyTo(proxyURL),
+				)(ctx, network, addr)
 				if assertPlainConn {
 					assert.NotEqual(t, reflect.TypeOf(&Conn{}), reflect.TypeOf(conn))
 				}
