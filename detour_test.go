@@ -1,6 +1,7 @@
 package detour
 
 import (
+	"context"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/netx"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,10 +24,10 @@ Connection:close
 </title></head><body><iframe src="http://10.10.34.34?type=Invalid Site&policy=MainPolicy " style="width: 100%; height: 100%" scrolling="no" marginwidth="0" marginheight="0" frameborder="0" vspace="0" hspace="0"></iframe></body></html>Connection closed by foreign host.`
 )
 
-func proxyTo(proxiedURL string) func(network, addr string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
+func proxyTo(proxiedURL string) dialFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		u, _ := url.Parse(proxiedURL)
-		return net.Dial("tcp", u.Host)
+		return net.Dial(network, u.Host)
 	}
 }
 
@@ -33,7 +35,7 @@ func TestBlockedImmediately(t *testing.T) {
 	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, mock := newMockServer(directMsg)
 
 	client := &http.Client{Timeout: 50 * time.Millisecond}
@@ -75,7 +77,7 @@ func TestRemoveFromWhitelist(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, _ := newMockServer(directMsg)
 	client := newClient(proxiedURL, 100*time.Millisecond)
 
@@ -94,7 +96,7 @@ func TestClosing(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, mock := newMockServer(directMsg)
 	mock.Msg(directMsg)
 	DirectAddrCh = make(chan string)
@@ -113,7 +115,7 @@ func TestIranRules(t *testing.T) {
 	defer RemoveFromWl("localhost")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
-	TimeoutToDetour = 50 * time.Millisecond
+	firstReadTimeoutToDetour = 50 * time.Millisecond
 	SetCountry("IR")
 	u, mock := newMockServer(directMsg)
 	client := newClient(proxiedURL, 100*time.Millisecond)
@@ -139,8 +141,15 @@ func newClient(proxyURL string, timeout time.Duration) *http.Client {
 func newAssertingClient(t *testing.T, proxyURL string, timeout time.Duration, assertPlainConn bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Dial: func(network, addr string) (net.Conn, error) {
-				conn, err := Dialer(proxyTo(proxyURL))(network, addr)
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := Dialer(
+					func(ctx context.Context, network, addr string) (net.Conn, error) {
+						// for simplicity, we use the same timeout for direct dialer.
+						newCTX, _ := context.WithTimeout(ctx, firstReadTimeoutToDetour)
+						return netx.DialContext(newCTX, network, addr)
+					},
+					proxyTo(proxyURL),
+				)(ctx, network, addr)
 				if assertPlainConn {
 					assert.NotEqual(t, reflect.TypeOf(&Conn{}), reflect.TypeOf(conn))
 				}
