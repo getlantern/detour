@@ -256,7 +256,7 @@ func (dc *Conn) followUpRead(b []byte) (n int, err error) {
 // detour sets up a detoured connection and try read again from it
 func (dc *Conn) detour(b []byte) (n int, err error) {
 	if err = dc.setupDetour(); err != nil {
-		log.Errorf("Error while setup detour: %s", err)
+		log.Errorf("Error while dialing detoured connection: %s", err)
 		return
 	}
 	if _, err = dc.resend(); err != nil {
