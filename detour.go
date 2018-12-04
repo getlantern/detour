@@ -163,7 +163,7 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 		log.Tracef("Dial %s to %s succeeded", dc.stateDesc(), addr)
 		if !whitelisted(addr) {
 			log.Tracef("Add %s to whitelist", addr)
-			AddToWl(dc.addr, false)
+			addToWl(dc.addr, false)
 		}
 		return dc, err
 	}
@@ -203,7 +203,7 @@ func (dc *Conn) Read(b []byte) (n int, err error) {
 				return dc.detour(b)
 			} else {
 				log.Debugf("Not HTTP GET request, add to whitelist")
-				AddToWl(dc.addr, false)
+				addToWl(dc.addr, false)
 			}
 		}
 		return
@@ -234,11 +234,11 @@ func (dc *Conn) followUpRead(b []byte) (n int, err error) {
 			// we only check first 4K bytes, which roughly equals to the payload of 3 full packets on Ethernet
 			if atomic.LoadInt64(&dc.readBytes) <= 4096 {
 				log.Tracef("Seems %s still blocked, add to whitelist so will try detour next time", dc.addr)
-				AddToWl(dc.addr, false)
+				addToWl(dc.addr, false)
 			}
 		case dc.inState(stateDetour) && wlTemporarily(dc.addr):
-			log.Tracef("Detoured route is not reliable for %s, not whitelist it", dc.addr)
-			RemoveFromWl(dc.addr)
+			log.Debugf("Detoured route is not reliable for %s, not whitelist it", dc.addr)
+			forceUnwhitelisted(dc.addr)
 		}
 		return
 	}
@@ -246,7 +246,7 @@ func (dc *Conn) followUpRead(b []byte) (n int, err error) {
 	// so just check it in one read rather than consecutive reads.
 	if dc.inState(stateDirect) && detector.FakeResponse(b) {
 		log.Tracef("%s still content hijacked, add to whitelist so will try detour next time", dc.addr)
-		AddToWl(dc.addr, false)
+		addToWl(dc.addr, false)
 		return
 	}
 	log.Tracef("Read %d bytes from %s %s", n, dc.addr, dc.stateDesc())
@@ -270,7 +270,7 @@ func (dc *Conn) detour(b []byte) (n int, err error) {
 		return
 	}
 	log.Tracef("Read %d bytes from %s %s, add to whitelist", n, dc.addr, dc.stateDesc())
-	AddToWl(dc.addr, false)
+	addToWl(dc.addr, false)
 	return
 }
 
@@ -319,7 +319,7 @@ func (dc *Conn) Close() error {
 	if atomic.LoadInt64(&dc.readBytes) > 0 {
 		if dc.inState(stateDetour) && wlTemporarily(dc.addr) {
 			log.Tracef("no error found till closing, add %s to permanent whitelist", dc.addr)
-			AddToWl(dc.addr, true)
+			addToWl(dc.addr, true)
 		} else if dc.inState(stateDirect) && !wlTemporarily(dc.addr) {
 			log.Tracef("no error found till closing, notify caller that %s can be dialed directly", dc.addr)
 			setAllowsDirect(dc.addr)

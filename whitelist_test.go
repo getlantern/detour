@@ -7,15 +7,19 @@ import (
 )
 
 func TestCheckSubdomain(t *testing.T) {
-	AddToWl("facebook.com", true)
+	clear()
+	addToWl("facebook.com", true)
 	assert.True(t, whitelisted("www.facebook.com:80"), "should match subdomain")
 	assert.True(t, whitelisted("sub2.facebook.com:80"), "should match all subdomains")
 }
 
-func TestDumpWhiteList(t *testing.T) {
-	AddToWl("a.com:80", true)
-	AddToWl("b.com:80", false)
-	dumped := DumpWhitelist()
-	assert.Contains(t, dumped, "a.com", "dumped list should contain permanent items")
-	assert.NotContains(t, dumped, "b.com", "dumped list should not contain temporary items")
+func TestRadixList(t *testing.T) {
+	l := newRadixList([]string{"google.com", "www.stuff.com:443"})
+
+	assert.True(t, l.containsExactly("google.com:80"))
+	assert.True(t, l.containsExactly("www.stuff.com"))
+	assert.True(t, l.matchesPrefix("www.google.com"))
+	assert.True(t, l.matchesPrefix("google.com"))
+	assert.True(t, l.matchesPrefix("www.stuff.com"))
+	assert.False(t, l.matchesPrefix("dude.stuff.com"))
 }

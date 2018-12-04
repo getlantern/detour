@@ -32,7 +32,8 @@ func proxyTo(proxiedURL string) dialFunc {
 }
 
 func TestBlockedImmediately(t *testing.T) {
-	defer RemoveFromWl("127.0.0.1")
+	clear()
+	defer forceUnwhitelisted("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
 	firstReadTimeoutToDetour = 50 * time.Millisecond
@@ -65,7 +66,7 @@ func TestBlockedImmediately(t *testing.T) {
 	}
 
 	client = newClient(proxiedURL, 100*time.Millisecond)
-	RemoveFromWl(u.Host)
+	forceUnwhitelisted(u.Host)
 	resp, err = client.PostForm(mockURL, url.Values{"key": []string{"value"}})
 	if assert.Error(t, err, "Non-idempotent method should not be detoured in same connection") {
 		assert.True(t, wlTemporarily(u.Host), "but should be added to whitelist so will detour next time")
@@ -73,7 +74,8 @@ func TestBlockedImmediately(t *testing.T) {
 }
 
 func TestRemoveFromWhitelist(t *testing.T) {
-	defer RemoveFromWl("127.0.0.1")
+	clear()
+	defer forceUnwhitelisted("127.0.0.1")
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
@@ -82,17 +84,20 @@ func TestRemoveFromWhitelist(t *testing.T) {
 	client := newClient(proxiedURL, 100*time.Millisecond)
 
 	u, _ := url.Parse(mockURL)
-	AddToWl(u.Host, false)
+	addToWl(u.Host, false)
 	_, err := client.Get(mockURL)
 	if assert.Error(t, err, "should have error if reading times out through detour") {
 		time.Sleep(250 * time.Millisecond)
+		addToWl(u.Host, false)
+		addToWl(u.Host, true)
 		assert.False(t, whitelisted(u.Host), "should be removed from whitelist if reading times out through detour")
 	}
 
 }
 
 func TestClosing(t *testing.T) {
-	defer RemoveFromWl("localhost")
+	clear()
+	defer forceUnwhitelisted("localhost")
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
 	proxy.Timeout(200*time.Millisecond, detourMsg)
@@ -112,7 +117,8 @@ func TestClosing(t *testing.T) {
 }
 
 func TestIranRules(t *testing.T) {
-	defer RemoveFromWl("localhost")
+	clear()
+	defer forceUnwhitelisted("localhost")
 	defer stopMockServers()
 	proxiedURL, _ := newMockServer(detourMsg)
 	firstReadTimeoutToDetour = 50 * time.Millisecond
