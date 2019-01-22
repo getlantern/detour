@@ -44,10 +44,6 @@ import (
 	"github.com/getlantern/golog"
 )
 
-// If DirectAddrCh is set, when a direct connection is closed without any error,
-// the connection's remote address (in host:port format) will be send to it
-var DirectAddrCh chan string = make(chan string)
-
 var (
 	log = golog.LoggerFor("detour")
 
@@ -57,9 +53,6 @@ var (
 	blockDetector atomic.Value
 
 	zeroTime time.Time
-
-	directAddrsMx sync.RWMutex
-	directAddrs   = make(map[string]bool)
 )
 
 func init() {
@@ -125,9 +118,6 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 	return func(ctx context.Context, network, addr string) (
 		conn net.Conn, err error,
 	) {
-		if allowsDirect(addr) {
-			return directDialer(ctx, network, addr)
-		}
 		dc := &Conn{dialDetour: detourDialer, network: network, addr: addr}
 		if !whitelisted(addr) {
 			log.Tracef("Attempting direct connection for %v", addr)
@@ -320,14 +310,6 @@ func (dc *Conn) Close() error {
 		if dc.inState(stateDetour) && wlTemporarily(dc.addr) {
 			log.Tracef("no error found till closing, add %s to permanent whitelist", dc.addr)
 			AddToWl(dc.addr, true)
-		} else if dc.inState(stateDirect) && !wlTemporarily(dc.addr) {
-			log.Tracef("no error found till closing, notify caller that %s can be dialed directly", dc.addr)
-			setAllowsDirect(dc.addr)
-			// just fire it, but not blocking if the chan is nil or no reader
-			select {
-			case DirectAddrCh <- dc.addr:
-			default:
-			}
 		}
 	}
 	conn := dc.getConn()
@@ -466,17 +448,4 @@ func (dc *Conn) inState(s uint32) bool {
 
 func (dc *Conn) setState(s uint32) {
 	atomic.StoreUint32(&dc.state, s)
-}
-
-func allowsDirect(addr string) bool {
-	directAddrsMx.RLock()
-	result := directAddrs[addr]
-	directAddrsMx.RUnlock()
-	return result
-}
-
-func setAllowsDirect(addr string) {
-	directAddrsMx.Lock()
-	directAddrs[addr] = true
-	directAddrsMx.Unlock()
 }

@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"testing"
 	"time"
 
@@ -99,14 +98,7 @@ func TestClosing(t *testing.T) {
 	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, mock := newMockServer(directMsg)
 	mock.Msg(directMsg)
-	DirectAddrCh = make(chan string)
 	if _, err := newClient(proxiedURL, 100*time.Millisecond).Get(mockURL); err != nil {
-		log.Debugf("Unable to send GET request to mock URL: %v", err)
-	}
-	u, _ := url.Parse(mockURL)
-	addr := <-DirectAddrCh
-	assert.Equal(t, u.Host, addr, "should get notified when a direct connetion has no error while closing")
-	if _, err := newAssertingClient(t, proxiedURL, 100*time.Millisecond, true).Get(mockURL); err != nil {
 		log.Debugf("Unable to send GET request to mock URL: %v", err)
 	}
 }
@@ -135,25 +127,18 @@ func TestIranRules(t *testing.T) {
 }
 
 func newClient(proxyURL string, timeout time.Duration) *http.Client {
-	return newAssertingClient(nil, proxyURL, timeout, false)
-}
-
-func newAssertingClient(t *testing.T, proxyURL string, timeout time.Duration, assertPlainConn bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				conn, err := Dialer(
+				dialer := Dialer(
 					func(ctx context.Context, network, addr string) (net.Conn, error) {
 						// for simplicity, we use the same timeout for direct dialer.
 						newCTX, _ := context.WithTimeout(ctx, firstReadTimeoutToDetour)
 						return netx.DialContext(newCTX, network, addr)
 					},
 					proxyTo(proxyURL),
-				)(ctx, network, addr)
-				if assertPlainConn {
-					assert.NotEqual(t, reflect.TypeOf(&Conn{}), reflect.TypeOf(conn))
-				}
-				return conn, err
+				)
+				return dialer(ctx, network, addr)
 			},
 		},
 		Timeout: timeout,
