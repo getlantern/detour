@@ -88,11 +88,11 @@ type Conn struct {
 	_writeDeadline atomic.Value
 }
 
-// WrappedConn exposes the underlying connection.
-func (c *Conn) WrappedConn() net.Conn {
-	c.muConn.RLock()
-	defer c.muConn.RUnlock()
-	return c.conn
+// Wrapped exposes the underlying connection.
+func (dc *Conn) Wrapped() net.Conn {
+	dc.muConn.RLock()
+	defer dc.muConn.RUnlock()
+	return dc.conn
 }
 
 const (
@@ -288,7 +288,7 @@ func (dc *Conn) setupDetour() error {
 	return nil
 }
 
-// Write() implements the function from net.Conn
+// Write implements the function from net.Conn
 func (dc *Conn) Write(b []byte) (n int, err error) {
 	if dc.inState(stateInitial) {
 		if n, err = dc.writeLocalBuffer(b); err != nil {
@@ -303,7 +303,7 @@ func (dc *Conn) Write(b []byte) (n int, err error) {
 	return
 }
 
-// Close() implements the function from net.Conn
+// Close implements the function from net.Conn
 func (dc *Conn) Close() error {
 	log.Tracef("Closing %s connection to %s", dc.stateDesc(), dc.addr)
 	if atomic.LoadInt64(&dc.readBytes) > 0 {
@@ -319,17 +319,17 @@ func (dc *Conn) Close() error {
 	return conn.Close()
 }
 
-// LocalAddr() implements the function from net.Conn
+// LocalAddr implements the function from net.Conn
 func (dc *Conn) LocalAddr() net.Addr {
 	return dc.getConn().LocalAddr()
 }
 
-// RemoteAddr() implements the function from net.Conn
+// RemoteAddr implements the function from net.Conn
 func (dc *Conn) RemoteAddr() net.Addr {
 	return dc.getConn().RemoteAddr()
 }
 
-// SetDeadline() implements the function from net.Conn
+// SetDeadline implements the function from net.Conn
 func (dc *Conn) SetDeadline(t time.Time) error {
 	if err := dc.SetReadDeadline(t); err != nil {
 		log.Debugf("Unable to set read deadline: %v", err)
@@ -340,7 +340,7 @@ func (dc *Conn) SetDeadline(t time.Time) error {
 	return nil
 }
 
-// SetReadDeadline() implements the function from net.Conn
+// SetReadDeadline implements the function from net.Conn
 func (dc *Conn) SetReadDeadline(t time.Time) error {
 	dc._readDeadline.Store(t)
 	if err := dc.getConn().SetReadDeadline(t); err != nil {
@@ -357,7 +357,7 @@ func (dc *Conn) readDeadline() time.Time {
 	return d.(time.Time)
 }
 
-// SetWriteDeadline() implements the function from net.Conn
+// SetWriteDeadline implements the function from net.Conn
 func (dc *Conn) SetWriteDeadline(t time.Time) error {
 	dc._writeDeadline.Store(t)
 	if err := dc.getConn().SetWriteDeadline(t); err != nil {
