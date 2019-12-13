@@ -99,12 +99,14 @@ const (
 	stateInitial = iota
 	stateDirect
 	stateDetour
+	stateClosed
 )
 
 var statesDesc = []string{
 	"initially",
 	"directly",
 	"detoured",
+	"closed",
 }
 
 // SetCountry sets the ISO 3166-1 alpha-2 country code
@@ -312,6 +314,7 @@ func (dc *Conn) Close() error {
 			AddToWl(dc.addr, true)
 		}
 	}
+	dc.setState(stateClosed)
 	conn := dc.getConn()
 	if conn == nil {
 		return nil

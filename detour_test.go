@@ -2,10 +2,15 @@ package detour
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
+	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,6 +76,44 @@ func TestBlockedImmediately(t *testing.T) {
 	}
 }
 
+func TestReadFailedImmediately(t *testing.T) {
+	defer RemoveFromWl("127.0.0.1")
+	defer stopMockServers()
+	proxiedURL, _ := newMockServer(detourMsg)
+	firstReadTimeoutToDetour = 50 * time.Millisecond
+	mockURL, _ := newMockServer(directMsg)
+
+	client := newDirectFailingClient(proxiedURL, 1*time.Hour, 0)
+	u, _ := url.Parse(mockURL)
+	resp, err := client.Get(mockURL)
+	if assert.NoError(t, err, "should have no error if reading fails immediately") {
+		defer resp.Body.Close()
+		assert.True(t, wlTemporarily(u.Host), "should be added to whitelist if reading fails immediately")
+		assertContent(t, resp, detourMsg, "should detour if reading fails immediately")
+	}
+}
+
+func TestReadFailedEventually(t *testing.T) {
+	defer RemoveFromWl("127.0.0.1")
+	defer stopMockServers()
+	proxiedURL, _ := newMockServer(detourMsg)
+	firstReadTimeoutToDetour = 50 * time.Millisecond
+	longMessage := make([]byte, 10000)
+	rand.Read(longMessage)
+	mockURL, _ := newMockServer(string(longMessage))
+
+	client := newDirectFailingClient(proxiedURL, 1*time.Hour, 1)
+	u, _ := url.Parse(mockURL)
+	resp, err := client.Get(mockURL)
+	if assert.NoError(t, err, "should get response if reading fails after first read") {
+		defer resp.Body.Close()
+		_, copyErr := io.Copy(ioutil.Discard, resp.Body)
+		if assert.Error(t, copyErr, "reading should have failed eventually") {
+			assert.True(t, wlTemporarily(u.Host), "should be added to whitelist if reading fails after first read")
+		}
+	}
+}
+
 func TestRemoveFromWhitelist(t *testing.T) {
 	defer RemoveFromWl("127.0.0.1")
 	defer stopMockServers()
@@ -78,7 +121,7 @@ func TestRemoveFromWhitelist(t *testing.T) {
 	proxy.Timeout(200*time.Millisecond, detourMsg)
 	firstReadTimeoutToDetour = 50 * time.Millisecond
 	mockURL, _ := newMockServer(directMsg)
-	client := newClient(proxiedURL, 100*time.Millisecond)
+	client := newDetourFailingClient(proxiedURL, 1*time.Hour, 0)
 
 	u, _ := url.Parse(mockURL)
 	AddToWl(u.Host, false)
@@ -127,6 +170,18 @@ func TestIranRules(t *testing.T) {
 }
 
 func newClient(proxyURL string, timeout time.Duration) *http.Client {
+	return newDetourFailingClient(proxyURL, timeout, math.MaxInt64)
+}
+
+func newDirectFailingClient(proxyURL string, timeout time.Duration, directFailAfterReads int64) *http.Client {
+	return newFailingClient(proxyURL, timeout, directFailAfterReads, math.MaxInt64)
+}
+
+func newDetourFailingClient(proxyURL string, timeout time.Duration, detourFailAfterReads int64) *http.Client {
+	return newFailingClient(proxyURL, timeout, math.MaxInt64, detourFailAfterReads)
+}
+
+func newFailingClient(proxyURL string, timeout time.Duration, directFailAfterReads int64, detourFailAfterReads int64) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -134,9 +189,19 @@ func newClient(proxyURL string, timeout time.Duration) *http.Client {
 					func(ctx context.Context, network, addr string) (net.Conn, error) {
 						// for simplicity, we use the same timeout for direct dialer.
 						newCTX, _ := context.WithTimeout(ctx, firstReadTimeoutToDetour)
-						return netx.DialContext(newCTX, network, addr)
+						conn, err := netx.DialContext(newCTX, network, addr)
+						if err == nil {
+							conn = &eventuallyFailingConn{Conn: conn, failAfterReads: directFailAfterReads}
+						}
+						return conn, err
 					},
-					proxyTo(proxyURL),
+					func(ctx context.Context, network, addr string) (net.Conn, error) {
+						conn, err := proxyTo(proxyURL)(ctx, network, addr)
+						if err == nil {
+							conn = &eventuallyFailingConn{Conn: conn, failAfterReads: detourFailAfterReads}
+						}
+						return conn, err
+					},
 				)
 				return dialer(ctx, network, addr)
 			},
@@ -149,4 +214,24 @@ func assertContent(t *testing.T, resp *http.Response, msg string, reason string)
 	b, err := ioutil.ReadAll(resp.Body)
 	assert.NoError(t, err, reason)
 	assert.Equal(t, msg, string(b), reason)
+}
+
+type eventuallyFailingConn struct {
+	net.Conn
+	failAfterReads int64
+	numReads       int64
+}
+
+func (conn *eventuallyFailingConn) Read(b []byte) (int, error) {
+	currentReads := atomic.AddInt64(&conn.numReads, 1)
+	if currentReads > conn.failAfterReads {
+		return 0, &net.OpError{
+			Op:     "read",
+			Net:    "tcp",
+			Source: conn.Conn.LocalAddr(),
+			Addr:   conn.Conn.RemoteAddr(),
+			Err:    errors.New("failing unexpectedly"),
+		}
+	}
+	return conn.Conn.Read(b)
 }
