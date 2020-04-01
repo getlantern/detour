@@ -122,7 +122,7 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 	) {
 		dc := &Conn{dialDetour: detourDialer, network: network, addr: addr}
 		if !whitelisted(addr) {
-			log.Tracef("Attempting direct connection for %v", addr)
+			log.Debugf("Attempting direct connection for %v", addr)
 			detector := blockDetector.Load().(*Detector)
 			dc.setState(stateInitial)
 			// Always try direct connection first. The caller may choose a
@@ -130,7 +130,7 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 			dc.conn, err = directDialer(ctx, network, addr)
 			if err == nil {
 				if !detector.DNSPoisoned(dc.conn) {
-					log.Tracef("Dial %s to %s succeeded", dc.stateDesc(), addr)
+					log.Debugf("Dial %s to %s succeeded", dc.stateDesc(), addr)
 					return dc, nil
 				}
 				log.Debugf("Dial %s to %s, dns hijacked, try detour", dc.stateDesc(), addr)
@@ -144,7 +144,7 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 				return dc, err
 			}
 		}
-		log.Tracef("Detouring %v", addr)
+		log.Debugf("Detouring %v", addr)
 		// if whitelisted or dial directly failed, try detour
 		dc.setState(stateDetour)
 		dc.conn, err = dc.dialDetour(ctx, network, addr)
@@ -152,9 +152,9 @@ func Dialer(directDialer dialFunc, detourDialer dialFunc) dialFunc {
 			log.Errorf("Dial %s failed: %s", dc.stateDesc(), err)
 			return nil, err
 		}
-		log.Tracef("Dial %s to %s succeeded", dc.stateDesc(), addr)
+		log.Debugf("Dial %s to %s succeeded", dc.stateDesc(), addr)
 		if !whitelisted(addr) {
-			log.Tracef("Add %s to whitelist", addr)
+			log.Debugf("Add %s to whitelist", addr)
 			AddToWl(dc.addr, false)
 		}
 		return dc, err
@@ -171,7 +171,7 @@ func (dc *Conn) Read(b []byte) (n int, err error) {
 	start := time.Now()
 	readDeadline := dc.readDeadline()
 	if !readDeadline.IsZero() && readDeadline.Sub(start) < 2*firstReadTimeoutToDetour {
-		log.Tracef("no time left to test %s, read %s", dc.addr, statesDesc[stateDirect])
+		log.Debugf("no time left to test %s, read %s", dc.addr, statesDesc[stateDirect])
 		dc.setState(stateDirect)
 		return dc.countedRead(b)
 	}
@@ -203,10 +203,10 @@ func (dc *Conn) Read(b []byte) (n int, err error) {
 	// Hijacked content is usualy encapsulated in one IP packet,
 	// so just check it in one read rather than consecutive reads.
 	if detector.FakeResponse(b) {
-		log.Tracef("Read %d bytes from %s %s, response is hijacked, detour", n, dc.addr, dc.stateDesc())
+		log.Debugf("Read %d bytes from %s %s, response is hijacked, detour", n, dc.addr, dc.stateDesc())
 		return dc.detour(b)
 	}
-	log.Tracef("Read %d bytes from %s %s, set state to direct", n, dc.addr, dc.stateDesc())
+	log.Debugf("Read %d bytes from %s %s, set state to direct", n, dc.addr, dc.stateDesc())
 	dc.setState(stateDirect)
 	return
 }
@@ -216,20 +216,20 @@ func (dc *Conn) followUpRead(b []byte) (n int, err error) {
 	detector := blockDetector.Load().(*Detector)
 	if n, err = dc.countedRead(b); err != nil {
 		if err == io.EOF {
-			log.Tracef("Read %d bytes from %s %s, EOF", n, dc.addr, dc.stateDesc())
+			log.Debugf("Read %d bytes from %s %s, EOF", n, dc.addr, dc.stateDesc())
 			return
 		}
-		log.Tracef("Read from %s %s failed: %s", dc.addr, dc.stateDesc(), err)
+		log.Debugf("Read from %s %s failed: %s", dc.addr, dc.stateDesc(), err)
 		switch {
 		case dc.inState(stateDirect) && detector.TamperingSuspected(err):
 			// to prevent a slow or unstable site from been treated as blocked,
 			// we only check first 4K bytes, which roughly equals to the payload of 3 full packets on Ethernet
 			if atomic.LoadInt64(&dc.readBytes) <= 4096 {
-				log.Tracef("Seems %s still blocked, add to whitelist so will try detour next time", dc.addr)
+				log.Debugf("Seems %s still blocked, add to whitelist so will try detour next time", dc.addr)
 				AddToWl(dc.addr, false)
 			}
 		case dc.inState(stateDetour) && wlTemporarily(dc.addr):
-			log.Tracef("Detoured route is not reliable for %s, not whitelist it", dc.addr)
+			log.Debugf("Detoured route is not reliable for %s, not whitelist it", dc.addr)
 			RemoveFromWl(dc.addr)
 		}
 		return
@@ -237,11 +237,11 @@ func (dc *Conn) followUpRead(b []byte) (n int, err error) {
 	// Hijacked content is usualy encapsulated in one IP packet,
 	// so just check it in one read rather than consecutive reads.
 	if dc.inState(stateDirect) && detector.FakeResponse(b) {
-		log.Tracef("%s still content hijacked, add to whitelist so will try detour next time", dc.addr)
+		log.Debugf("%s still content hijacked, add to whitelist so will try detour next time", dc.addr)
 		AddToWl(dc.addr, false)
 		return
 	}
-	log.Tracef("Read %d bytes from %s %s", n, dc.addr, dc.stateDesc())
+	log.Debugf("Read %d bytes from %s %s", n, dc.addr, dc.stateDesc())
 	return
 }
 
@@ -261,7 +261,7 @@ func (dc *Conn) detour(b []byte) (n int, err error) {
 		log.Debugf("Read from %s %s still failed: %s", dc.addr, dc.stateDesc(), err)
 		return
 	}
-	log.Tracef("Read %d bytes from %s %s, add to whitelist", n, dc.addr, dc.stateDesc())
+	log.Debugf("Read %d bytes from %s %s, add to whitelist", n, dc.addr, dc.stateDesc())
 	AddToWl(dc.addr, false)
 	return
 }
@@ -275,7 +275,7 @@ func (dc *Conn) resend() (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
-	log.Tracef("Resending %d bytes from local buffer to %s", len(b), dc.addr)
+	log.Debugf("Resending %d bytes from local buffer to %s", len(b), dc.addr)
 	n, err := dc.getConn().Write(b)
 	return n, err
 }
@@ -285,7 +285,7 @@ func (dc *Conn) setupDetour() error {
 	if err != nil {
 		return err
 	}
-	log.Tracef("Dialed a new detour connection to %s", dc.addr)
+	log.Debugf("Dialed a new detour connection to %s", dc.addr)
 	dc.setConn(c)
 	return nil
 }
@@ -301,16 +301,16 @@ func (dc *Conn) Write(b []byte) (n int, err error) {
 		log.Debugf("Error while write %d bytes to %s %s: %s", len(b), dc.addr, dc.stateDesc(), err)
 		return
 	}
-	log.Tracef("Wrote %d bytes to %s %s", len(b), dc.addr, dc.stateDesc())
+	log.Debugf("Wrote %d bytes to %s %s", len(b), dc.addr, dc.stateDesc())
 	return
 }
 
 // Close implements the function from net.Conn
 func (dc *Conn) Close() error {
-	log.Tracef("Closing %s connection to %s", dc.stateDesc(), dc.addr)
+	log.Debugf("Closing %s connection to %s", dc.stateDesc(), dc.addr)
 	if atomic.LoadInt64(&dc.readBytes) > 0 {
 		if dc.inState(stateDetour) && wlTemporarily(dc.addr) {
-			log.Tracef("no error found till closing, add %s to permanent whitelist", dc.addr)
+			log.Debugf("no error found till closing, add %s to permanent whitelist", dc.addr)
 			AddToWl(dc.addr, true)
 		}
 	}
@@ -435,7 +435,7 @@ func (dc *Conn) setConn(c net.Conn) {
 	if err := dc.conn.SetWriteDeadline(dc.writeDeadline()); err != nil {
 		log.Debugf("Unable to set write deadline: %v", err)
 	}
-	log.Tracef("Replaced connection to %s from direct to detour and closing old one", dc.addr)
+	log.Debugf("Replaced connection to %s from direct to detour and closing old one", dc.addr)
 	if err := oldConn.Close(); err != nil {
 		log.Debugf("Unable to close old connection: %v", err)
 	}

@@ -40,7 +40,7 @@ func init() {
 var defaultDetector = Detector{
 	DNSPoisoned: func(net.Conn) bool { return false },
 	TamperingSuspected: func(err error) bool {
-		log.Tracef("Checking if tampering is suspected for %v", err)
+		log.Debugf("Checking if tampering is suspected for %v", err)
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return true
 		}
