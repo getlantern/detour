@@ -22,10 +22,10 @@ var (
 	directMsg string = "hello direct"
 	detourMsg string = "hello detour"
 	iranResp  string = `HTTP/1.1 403 Forbidden
-Connection:close
-
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1256"><title>M1-6
-</title></head><body><iframe src="http://10.10.34.34?type=Invalid Site&policy=MainPolicy " style="width: 100%; height: 100%" scrolling="no" marginwidth="0" marginheight="0" frameborder="0" vspace="0" hspace="0"></iframe></body></html>Connection closed by foreign host.`
+	Connection:close
+	
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1256"><title>NTR1</title>
+</head><body><iframe src="http://10.10.34.36?type=InvalidKeyword&policy=MainPolicy " style="width: 100%; height: 100%" scrolling="no" marginwidth="0" marginheight="0" frameborder="0" vspace="0" hspace="0"></iframe></body></html>Connection closed by foreign host.`
 )
 
 func proxyTo(proxiedURL string) dialFunc {
@@ -163,9 +163,11 @@ func TestIranRules(t *testing.T) {
 
 	// this test can verifies dns hijack detection if runs inside Iran,
 	// but only will time out and detour if runs outside Iran
-	resp, err = client.Get("http://" + iranRedirectAddr)
-	if assert.NoError(t, err, "should not error if dns hijacked in Iran") {
-		assertContent(t, resp, detourMsg, "should detour if dns hijacked in Iran")
+	for _, iranRedirectAddr := range iranRedirectAddrs {
+		resp, err = client.Get("http://" + iranRedirectAddr)
+		if assert.NoError(t, err, "should not error if dns hijacked in Iran") {
+			assertContent(t, resp, detourMsg, "should detour if dns hijacked in Iran")
+		}
 	}
 }
 
